@@ -5,34 +5,93 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>서울특별시교육청 계약업무 지침 · Gemini 근거형 챗봇</title>
 <style>
-html,body{height:100%;margin:0;font-family:system-ui,"Noto Sans KR",sans-serif;background:#f5f7fb;color:#172033}.wrap{height:100%;display:grid;place-items:center}.box{background:#fff;border:1px solid #dfe5ee;border-radius:16px;padding:24px 28px;box-shadow:0 12px 36px rgba(28,45,75,.11);max-width:520px}h1{font-size:18px;margin:0 0 10px}p{margin:0;line-height:1.7;color:#687386}.err{color:#b42318;white-space:pre-wrap;margin-top:12px}
+html,body{height:100%;margin:0;font-family:system-ui,"Noto Sans KR",sans-serif;background:#f5f7fb;color:#172033}.wrap{height:100%;display:grid;place-items:center;padding:20px;box-sizing:border-box}.box{background:#fff;border:1px solid #dfe5ee;border-radius:16px;padding:24px 28px;box-shadow:0 12px 36px rgba(28,45,75,.11);max-width:580px;width:100%;box-sizing:border-box}h1{font-size:19px;margin:0 0 10px}p{margin:0;line-height:1.7;color:#687386}.status{margin-top:14px;color:#3559c7;font-size:14px}.err{color:#b42318;white-space:pre-wrap;margin-top:12px;font-size:14px}.retry{display:none;margin-top:14px;border:0;border-radius:9px;background:#3156d3;color:white;padding:10px 15px;font-weight:700;cursor:pointer}
 </style>
 </head>
 <body>
-<div class="wrap"><div class="box"><h1>계약업무 챗봇을 불러오는 중입니다.</h1><p>내장 문서와 Gemini RAG 화면을 준비하고 있습니다.</p><div id="err" class="err"></div></div></div>
+<div class="wrap"><div class="box">
+<h1>계약업무 챗봇을 불러오는 중입니다.</h1>
+<p>내장 문서와 Gemini RAG 화면을 준비하고 있습니다.</p>
+<div id="status" class="status">초기화 중...</div>
+<div id="err" class="err"></div>
+<button id="retry" class="retry" type="button">다시 불러오기</button>
+</div></div>
 <script>
-(async()=>{
+const PART_COUNT=7;
+const RAW_BASE='https://raw.githubusercontent.com/joongkyoonlee/chat/main/payload/';
+const statusEl=document.getElementById('status');
+const errEl=document.getElementById('err');
+const retryBtn=document.getElementById('retry');
+
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+async function fetchText(url, attempts=3){
+  let lastErr;
+  for(let i=1;i<=attempts;i++){
+    try{
+      const sep=url.includes('?')?'&':'?';
+      const r=await fetch(url+sep+'v='+Date.now(),{cache:'no-store'});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const t=(await r.text()).trim();
+      if(!t) throw new Error('빈 파일');
+      return t;
+    }catch(e){
+      lastErr=e;
+      if(i<attempts) await sleep(500*i);
+    }
+  }
+  throw lastErr;
+}
+
+async function loadPart(n){
+  const local=`./payload/part${n}.txt`;
   try{
-    const files=Array.from({length:7},(_,i)=>`payload/part${i+1}.txt`);
-    const parts=await Promise.all(files.map(async f=>{
-      const r=await fetch(f,{cache:'no-store'});
-      if(!r.ok) throw new Error(`${f} 불러오기 실패 (${r.status})`);
-      return (await r.text()).trim();
-    }));
-    const b64=parts.join('');
+    return await fetchText(local,3);
+  }catch(localErr){
+    statusEl.textContent=`문서 데이터 ${n}/${PART_COUNT} · 백업 경로로 재시도 중...`;
+    return await fetchText(`${RAW_BASE}part${n}.txt`,3);
+  }
+}
+
+async function start(){
+  retryBtn.style.display='none';
+  errEl.textContent='';
+  statusEl.textContent='문서 데이터를 확인하고 있습니다...';
+  try{
+    const parts=[];
+    for(let i=1;i<=PART_COUNT;i++){
+      statusEl.textContent=`문서 데이터 불러오는 중 ${i}/${PART_COUNT}`;
+      parts.push(await loadPart(i));
+    }
+
+    statusEl.textContent='내장 문서를 복원하고 있습니다...';
+    const b64=parts.join('').replace(/\s+/g,'');
     const bin=atob(b64);
     const bytes=new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-    if(!('DecompressionStream' in window)) throw new Error('이 브라우저는 gzip 압축 해제를 지원하지 않습니다. 최신 Chrome/Edge에서 열어 주세요.');
+
+    if(!('DecompressionStream' in window)){
+      throw new Error('이 브라우저는 압축 해제를 지원하지 않습니다. 최신 Chrome 또는 Edge를 이용해 주세요.');
+    }
+
     const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
     const html=await new Response(stream).text();
+    if(!html || !html.toLowerCase().includes('<html')) throw new Error('챗봇 HTML 복원에 실패했습니다.');
+
+    statusEl.textContent='챗봇을 시작합니다...';
     document.open();
     document.write(html);
     document.close();
   }catch(e){
-    document.getElementById('err').textContent='불러오기 오류: '+e.message;
+    console.error(e);
+    statusEl.textContent='불러오지 못했습니다.';
+    errEl.textContent='불러오기 오류: '+(e && e.message ? e.message : String(e));
+    retryBtn.style.display='inline-block';
   }
-})();
+}
+
+retryBtn.addEventListener('click',start);
+start();
 </script>
 </body>
 </html>
